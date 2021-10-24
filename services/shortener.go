@@ -12,6 +12,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/sony/sonyflake"
 	"github.com/xiantank/url-shortener/services/models"
+	"golang.org/x/sync/singleflight"
 	"gorm.io/gorm"
 )
 
@@ -25,6 +26,7 @@ type UrlShorterService interface {
 
 type urlShorterImpl struct {
 	uniqueIDService GlobalUniqueIDService
+	sfg             *singleflight.Group
 
 	cache  *redis.Client
 	db     *gorm.DB
@@ -33,10 +35,11 @@ type urlShorterImpl struct {
 
 var _ UrlShorterService = (*urlShorterImpl)(nil)
 
-func NewURLShorterService(uniqueIDService GlobalUniqueIDService, redisCli *redis.Client, db *gorm.DB, logger *log.Logger) UrlShorterService {
+func NewURLShorterService(sfg *singleflight.Group, uniqueIDService GlobalUniqueIDService, redisCli *redis.Client, db *gorm.DB, logger *log.Logger) UrlShorterService {
 	rand.Seed(time.Now().UnixNano())
 	_ = sonyflake.NewSonyflake(sonyflake.Settings{})
 	return &urlShorterImpl{
+		sfg:             sfg,
 		uniqueIDService: uniqueIDService,
 		cache:           redisCli,
 		db:              db,
@@ -56,14 +59,42 @@ func (u urlShorterImpl) Get(ctx context.Context, pathID string) (string, error) 
 	}
 
 	// TODO: use bloom(or xor/ribbon) filter to check should find in db
-	// TODO: limit concurrent find in db
 	// TODO: need to handle high concurrent request cache issue()
 
-	shortUrl := &models.ShortUrl{}
-	db := u.db.WithContext(ctx)
+	resChan := u.sfg.DoChan(pathID, func() (interface{}, error) {
+		shortUrl := &models.ShortUrl{}
+		db := u.db.WithContext(ctx)
 
-	err = db.Where("uid = ?", pathID).Find(shortUrl).Error
-	return shortUrl.Url, err
+		err = db.Where("uid = ?", pathID).Find(shortUrl).Error
+		if err != nil {
+			u.logger.Errorf("Find fail, err: %+v", err)
+			return nil, err
+		}
+
+		now := time.Now()
+		expireAt := time.Unix(shortUrl.ExpireAt, 0)
+		ttl := defaultCacheTTL
+
+		if now.Add(defaultCacheTTL).After(expireAt) {
+			ttl = expireAt.Sub(now)
+		}
+
+		u.cache.SetNX(ctx, cacheKey, shortUrl.Url, ttl)
+
+		return shortUrl, err
+	})
+
+	select {
+	case res := <-resChan:
+		if res.Err != nil {
+			return "", res.Err
+		}
+
+		shortUrl := res.Val.(*models.ShortUrl)
+		return shortUrl.Url, nil
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
 }
 
 func (u urlShorterImpl) Set(ctx context.Context, url string, expireAt int64) (*models.ShortUrl, error) {

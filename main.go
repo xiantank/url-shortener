@@ -10,9 +10,9 @@ import (
 	"github.com/sony/sonyflake"
 	"github.com/xiantank/url-shortener/config"
 	db2 "github.com/xiantank/url-shortener/db"
-
 	"github.com/xiantank/url-shortener/rest"
 	"github.com/xiantank/url-shortener/services"
+	"golang.org/x/sync/singleflight"
 )
 
 func main() {
@@ -33,8 +33,9 @@ func main() {
 
 	r := gin.Default()
 	sf := sonyflake.NewSonyflake(sonyflake.Settings{})
+	sfg := &singleflight.Group{}
 	uniqueIDService := services.NewGlobalUniqueIDServiceBySonyFlake(sf)
-	shortenerService := services.NewURLShorterService(uniqueIDService, redisCli, db, logger) // TODO: db use repository
+	shortenerService := services.NewURLShorterService(sfg, uniqueIDService, redisCli, db, logger) // TODO: db use repository
 	rest.RegisterHandler(r, shortenerService, logger)
 
 	endless.ListenAndServe(":3000", r)
