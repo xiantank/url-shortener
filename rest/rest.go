@@ -7,14 +7,15 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
+
 	"github.com/xiantank/url-shortener/services"
 )
 
 type restImpl struct {
-	engine              *gin.Engine
-	urlShortenerService services.UrlShorterService
-	uniqueIDService     services.GlobalUniqueIDService
-	logger              *logrus.Logger
+	engine          *gin.Engine
+	serviceOp       services.ServiceOp
+	uniqueIDService services.GlobalUniqueIDService
+	logger          *logrus.Logger
 }
 
 type PostShortUrlRequest struct {
@@ -22,12 +23,12 @@ type PostShortUrlRequest struct {
 	ExpireAt time.Time `json:"expireAt" binding:"required"`
 }
 
-func RegisterHandler(engine *gin.Engine, shortenerService services.UrlShorterService, logger *logrus.Logger) {
+func RegisterHandler(engine *gin.Engine, serviceOp services.ServiceOp, logger *logrus.Logger) {
 	// TODO: add log/error handling middleware
 	ri := &restImpl{
-		engine:              engine,
-		urlShortenerService: shortenerService,
-		logger:              logger,
+		engine:    engine,
+		serviceOp: serviceOp,
+		logger:    logger,
 	}
 
 	engine.GET("/:uid", ri.GetShorts)
@@ -44,8 +45,12 @@ func (ri restImpl) ok(ctx *gin.Context) {
 
 func (ri restImpl) GetShorts(ctx *gin.Context) {
 	uid := ctx.Param("uid")
-	url, err := ri.urlShortenerService.Get(ctx.Request.Context(), uid)
+	url, err := ri.serviceOp.UrlShorter.Get(ctx.Request.Context(), uid)
 	if err != nil {
+		if err == services.ExpiredError {
+			ctx.AbortWithStatus(http.StatusNotFound)
+			return
+		}
 		ctx.AbortWithError(http.StatusInternalServerError, err)
 		return
 	}
@@ -60,7 +65,7 @@ func (ri restImpl) PostShorts(ctx *gin.Context) {
 		ctx.AbortWithError(http.StatusBadRequest, err)
 		return
 	}
-	shortUrl, err := ri.urlShortenerService.Set(ctx.Request.Context(), req.Url, req.ExpireAt.Unix())
+	shortUrl, err := ri.serviceOp.UrlShorter.Set(ctx.Request.Context(), req.Url, req.ExpireAt.Unix())
 	if err != nil {
 		ctx.AbortWithError(http.StatusInternalServerError, err)
 		return
