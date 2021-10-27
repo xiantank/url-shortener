@@ -13,6 +13,7 @@ import (
 	"github.com/sony/sonyflake"
 	"golang.org/x/sync/singleflight"
 
+	"github.com/xiantank/url-shortener/errors"
 	"github.com/xiantank/url-shortener/models"
 	"github.com/xiantank/url-shortener/repositories"
 )
@@ -26,8 +27,9 @@ type UrlShorterService interface {
 }
 
 type urlShorterImpl struct {
-	uniqueIDService GlobalUniqueIDService
-	sfg             *singleflight.Group
+	uniqueIDService    GlobalUniqueIDService
+	bloomFilterService BloomFilterService
+	sfg                *singleflight.Group
 
 	cache  *redis.Client
 	repoOp repositories.RepositoryOp
@@ -36,15 +38,16 @@ type urlShorterImpl struct {
 
 var _ UrlShorterService = (*urlShorterImpl)(nil)
 
-func NewURLShorterService(sfg *singleflight.Group, uniqueIDService GlobalUniqueIDService, redisCli *redis.Client, repoOp repositories.RepositoryOp, logger *log.Logger) UrlShorterService {
+func NewURLShorterService(sfg *singleflight.Group, uniqueIDService GlobalUniqueIDService, bloomFilterService BloomFilterService, redisCli *redis.Client, repoOp repositories.RepositoryOp, logger *log.Logger) UrlShorterService {
 	rand.Seed(time.Now().UnixNano())
 	_ = sonyflake.NewSonyflake(sonyflake.Settings{})
 	return &urlShorterImpl{
-		sfg:             sfg,
-		uniqueIDService: uniqueIDService,
-		cache:           redisCli,
-		repoOp:          repoOp,
-		logger:          logger,
+		sfg:                sfg,
+		uniqueIDService:    uniqueIDService,
+		bloomFilterService: bloomFilterService,
+		cache:              redisCli,
+		repoOp:             repoOp,
+		logger:             logger,
 	}
 }
 
@@ -55,7 +58,7 @@ func (u urlShorterImpl) Get(ctx context.Context, pathID string) (string, error) 
 	v, err := u.cache.Get(ctx, cacheKey).Result()
 	if err == nil {
 		if v == "" {
-			return "", ExpiredError
+			return "", errors.ErrExpired
 		}
 
 		return v, nil
@@ -65,24 +68,32 @@ func (u urlShorterImpl) Get(ctx context.Context, pathID string) (string, error) 
 		return "", err
 	}
 
-	// TODO: use bloom(or xor/ribbon) filter to check should find in db
-	// TODO: need to handle high concurrent request cache issue()
+	exists, err := u.bloomFilterService.Exists(pathID)
+	if err != nil {
+		return "", err
+	}
+	if !exists {
+		return "", errors.ErrNotFound
+	}
 
 	resChan := u.sfg.DoChan(pathID, func() (interface{}, error) {
-		shortUrl, err := u.repoOp.ShortUrl.GetByPathID(ctx, pathID) // TODO: handle gorm.ErrRecordNotFound
+		ttl := defaultCacheTTL
+		shortUrl, err := u.repoOp.ShortUrl.GetByPathID(ctx, pathID)
+		if err == errors.ErrNotFound {
+			u.cache.SetNX(ctx, cacheKey, "", ttl)
+		}
 		if err != nil {
 			return "", err
 		}
 
 		now := time.Now()
 		expireAt := time.Unix(shortUrl.ExpireAt, 0)
-		ttl := defaultCacheTTL
 
 		// expired
 		if now.After(expireAt) {
 			u.cache.SetNX(ctx, cacheKey, "", ttl)
 
-			return "", ExpiredError
+			return "", errors.ErrExpired
 		}
 
 		// expired_at < now + ttl
@@ -114,22 +125,21 @@ func (u urlShorterImpl) Set(ctx context.Context, url string, expireAt int64) (*m
 		return nil, err
 	}
 
-	pathID := hash(uniqueId + url) // TODO: padWithZero or not?
-
-	// TODO: if pathID MAYBE exists (use bloom filter to check) generate new one(maybe at most 3 times?)
+	pathID := hash(uniqueId + url)
 
 	shortUrl := &models.ShortUrl{
 		UID:      pathID,
 		Url:      url,
 		ExpireAt: expireAt,
 	}
-	// TODO: handle expired in db(maybe rm data or handle ttl in app/cache)
 
 	if err := u.repoOp.ShortUrl.Create(ctx, shortUrl); err != nil {
 		return nil, err
 	}
+	if err := u.bloomFilterService.Add(pathID); err != nil {
+		return nil, err
+	}
 
-	// TODO: update to bloom filter
 	cacheKey := fmt.Sprintf(shortUrlCacheTemplate, pathID)
 
 	// TODO: update to cache with default + random ttl

@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
 
+	"github.com/xiantank/url-shortener/errors"
 	"github.com/xiantank/url-shortener/services"
 )
 
@@ -47,10 +48,16 @@ func (ri restImpl) GetShorts(ctx *gin.Context) {
 	uid := ctx.Param("uid")
 	url, err := ri.serviceOp.UrlShorter.Get(ctx.Request.Context(), uid)
 	if err != nil {
-		if err == services.ExpiredError {
+		switch err {
+		case errors.ErrExpired:
+			ctx.AbortWithStatus(http.StatusNotFound)
+			return
+		case errors.ErrNotFound:
+			ri.logger.Infof("not exists pathID: %v", uid)
 			ctx.AbortWithStatus(http.StatusNotFound)
 			return
 		}
+
 		ctx.AbortWithError(http.StatusInternalServerError, err)
 		return
 	}

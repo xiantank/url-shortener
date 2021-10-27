@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 
+	redisbloom "github.com/RedisBloom/redisbloom-go"
 	"github.com/fvbock/endless"
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis/v8"
@@ -29,6 +30,7 @@ func main() {
 		Password: "", // no password set
 		DB:       0,  // use default DB
 	}) // TODO: mv and check already connect
+	redisBloomCli := redisbloom.NewClient(fmt.Sprintf("%s:%s", config.RedisHost, config.RedisPort), "redis", nil)
 
 	//gin.SetMode(gin.ReleaseMode)
 	db = db.Debug()
@@ -37,7 +39,7 @@ func main() {
 	sf := sonyflake.NewSonyflake(sonyflake.Settings{})
 	sfg := &singleflight.Group{}
 	repoOp := repositories.New(db)
-	serviceOp := services.New(repoOp, sf, sfg, redisCli, logger)
+	serviceOp := services.New(repoOp, sf, sfg, redisCli, redisBloomCli, logger)
 	rest.RegisterHandler(r, serviceOp, logger)
 
 	endless.ListenAndServe(":3000", r)

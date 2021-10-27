@@ -12,8 +12,9 @@ var (
 	DBUser     = getEnvWithDefault("DATABASE_USER", "root")
 	DBPassword = getEnvWithDefault("DATABASE_PASSWORD", "root")
 
-	RedisHost = getEnvWithDefault("REDIS_HOST", "localhost")
-	RedisPort = getEnvWithDefault("REDIS_PORT", "6379")
+	RedisHost       = getEnvWithDefault("REDIS_HOST", "localhost")
+	RedisPort       = getEnvWithDefault("REDIS_PORT", "6379")
+	BloomFilterName = getEnvWithDefault("REDIS_BLOOM_FILTER_NAME", "url_shortener")
 )
 
 func mustGetEnv(target string) string {
