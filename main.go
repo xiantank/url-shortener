@@ -26,14 +26,11 @@ func main() {
 		panic(err)
 	}
 	redisCli := redis.NewClient(&redis.Options{
-		Addr:     fmt.Sprintf("%s:%s", config.RedisHost, config.RedisPort),
-		Password: "", // no password set
-		DB:       0,  // use default DB
+		Addr: fmt.Sprintf("%s:%s", config.RedisHost, config.RedisPort),
 	}) // TODO: mv and check already connect
 	redisBloomCli := redisbloom.NewClient(fmt.Sprintf("%s:%s", config.RedisHost, config.RedisPort), "redis", nil)
 
-	//gin.SetMode(gin.ReleaseMode)
-	db = db.Debug()
+	gin.SetMode(gin.ReleaseMode)
 
 	r := gin.Default()
 	sf := sonyflake.NewSonyflake(sonyflake.Settings{})

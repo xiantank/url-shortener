@@ -25,7 +25,6 @@ type PostShortUrlRequest struct {
 }
 
 func RegisterHandler(engine *gin.Engine, serviceOp services.ServiceOp, logger *logrus.Logger) {
-	// TODO: add log/error handling middleware
 	ri := &restImpl{
 		engine:    engine,
 		serviceOp: serviceOp,

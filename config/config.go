@@ -22,14 +22,6 @@ var (
 	CacheTTLInSeconds = getInt64EnvWithDefault("CACHE_TTL_IN_SECONDS", 86400)
 )
 
-func mustGetEnv(target string) string {
-	if result, ok := os.LookupEnv(target); ok {
-		return result
-	}
-
-	panic(fmt.Sprintf("Could not find environment variable: %s", target))
-}
-
 func getEnvWithDefault(target, def string) string {
 	if result, ok := os.LookupEnv(target); ok {
 		return result

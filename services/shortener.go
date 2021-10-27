@@ -54,7 +54,6 @@ func NewURLShorterService(sfg *singleflight.Group, uniqueIDService GlobalUniqueI
 func (u urlShorterImpl) Get(ctx context.Context, pathID string) (string, error) {
 	cacheKey := fmt.Sprintf(shortUrlCacheTemplate, pathID)
 	// NOTE: value in cache: empty string: expired; others: full url
-	//TODO: not found but pass by bloom-filter also should put empty string to cache
 	v, err := u.cache.Get(ctx, cacheKey).Result()
 	if err == nil {
 		if v == "" {
