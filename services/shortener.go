@@ -19,7 +19,7 @@ import (
 )
 
 const shortUrlCacheTemplate = "url::%s"
-const defaultCacheTTL = time.Hour * 24
+const cacheTTLInSeconds = int64(86400)
 
 type UrlShorterService interface {
 	Get(ctx context.Context, uid string) (string, error)
@@ -77,7 +77,7 @@ func (u urlShorterImpl) Get(ctx context.Context, pathID string) (string, error) 
 	}
 
 	resChan := u.sfg.DoChan(pathID, func() (interface{}, error) {
-		ttl := defaultCacheTTL
+		ttl := u.getCacheTTL(cacheTTLInSeconds)
 		shortUrl, err := u.repoOp.ShortUrl.GetByPathID(ctx, pathID)
 		if err == errors.ErrNotFound {
 			u.cache.SetNX(ctx, cacheKey, "", ttl)
@@ -97,7 +97,7 @@ func (u urlShorterImpl) Get(ctx context.Context, pathID string) (string, error) 
 		}
 
 		// expired_at < now + ttl
-		if now.Add(defaultCacheTTL).After(expireAt) {
+		if now.Add(time.Duration(cacheTTLInSeconds) * time.Second).After(expireAt) {
 			ttl = expireAt.Sub(now)
 		}
 
@@ -140,12 +140,12 @@ func (u urlShorterImpl) Set(ctx context.Context, url string, expireAt int64) (*m
 		return nil, err
 	}
 
-	cacheKey := fmt.Sprintf(shortUrlCacheTemplate, pathID)
-
-	// TODO: update to cache with default + random ttl
-	u.cache.SetNX(ctx, cacheKey, url, defaultCacheTTL)
-
 	return shortUrl, nil
+}
+
+// getCacheTTL: ttl 1~1.1 * timeInSeconds
+func (u urlShorterImpl) getCacheTTL(timeInSeconds int64) time.Duration {
+	return time.Duration(timeInSeconds)*time.Second + time.Second*time.Duration(float64(timeInSeconds)*0.1*rand.Float64())
 }
 
 func hash(s string) string {

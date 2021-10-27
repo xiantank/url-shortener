@@ -42,6 +42,5 @@ func main() {
 	serviceOp := services.New(repoOp, sf, sfg, redisCli, redisBloomCli, logger)
 	rest.RegisterHandler(r, serviceOp, logger)
 
-	endless.ListenAndServe(":3000", r)
-
+	endless.ListenAndServe(fmt.Sprintf(":%s", config.ServerPort), r)
 }
